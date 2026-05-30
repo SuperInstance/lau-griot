@@ -1,0 +1,725 @@
+// lau-griot — Living Memory, Told Through Stories
+//
+// Inspired by the West African griot tradition and the Japanese iemoto system.
+// A griot doesn't store data. A griot tells stories about data. The story IS the memory.
+//
+// Serde everywhere for export/import.
+
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GriotId(pub String);
+
+impl std::fmt::Display for GriotId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StoryType {
+    Origin,
+    Triumph,
+    Failure,
+    Transformation,
+    Inheritance,
+    Cautionary,
+    Discovery,
+}
+
+impl std::fmt::Display for StoryType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoryType::Origin => write!(f, "Origin"),
+            StoryType::Triumph => write!(f, "Triumph"),
+            StoryType::Failure => write!(f, "Failure"),
+            StoryType::Transformation => write!(f, "Transformation"),
+            StoryType::Inheritance => write!(f, "Inheritance"),
+            StoryType::Cautionary => write!(f, "Cautionary"),
+            StoryType::Discovery => write!(f, "Discovery"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Story {
+    pub title: String,
+    pub story_type: StoryType,
+    pub subjects: Vec<String>,
+    pub teller: GriotId,
+    pub tick_told: u64,
+    pub narrative: String,
+    pub lessons: Vec<String>,
+    pub related_stories: Vec<String>,
+    pub telling_count: u32,
+}
+
+impl Story {
+    pub fn retell(&self) -> Story {
+        let mut s = self.clone();
+        s.telling_count += 1;
+        s
+    }
+
+    pub fn add_lesson(&mut self, lesson: String) {
+        self.lessons.push(lesson);
+    }
+
+    pub fn relate_to(&mut self, other_story_id: &str) {
+        let id = other_story_id.to_string();
+        if !self.related_stories.contains(&id) {
+            self.related_stories.push(id);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Griot {
+    pub id: GriotId,
+    pub name: String,
+    pub specialties: Vec<StoryType>,
+    pub stories_told: Vec<String>,
+    pub apprentices: Vec<GriotId>,
+    pub generation: u32,
+}
+
+impl Griot {
+    pub fn tell(&mut self, story: Story) -> String {
+        let id = format!("{}:{}", story.title.replace(' ', "-").to_lowercase(), story.telling_count);
+        self.stories_told.push(id.clone());
+        id
+    }
+
+    pub fn recall(&self, _story_id: &str) -> Option<&Story> {
+        None
+    }
+
+    pub fn specializes_in(&self, stype: &StoryType) -> bool {
+        self.specialties.contains(stype)
+    }
+
+    pub fn is_master(&self) -> bool {
+        self.generation >= 3 && self.stories_told.len() >= 50
+    }
+
+    pub fn take_apprentice(&mut self, apprentice: GriotId) {
+        if !self.apprentices.contains(&apprentice) {
+            self.apprentices.push(apprentice);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GriotStats {
+    pub total_griots: usize,
+    pub total_stories: usize,
+    pub total_lessons: usize,
+    pub master_griots: usize,
+    pub avg_stories_per_griot: f64,
+    pub stories_by_type: HashMap<StoryType, usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GriotArchive {
+    pub stories: HashMap<String, Story>,
+    pub griots: HashMap<GriotId, Griot>,
+    pub index_by_subject: HashMap<String, Vec<String>>,
+    pub index_by_type: HashMap<StoryType, Vec<String>>,
+}
+
+impl GriotArchive {
+    pub fn new() -> Self {
+        GriotArchive {
+            stories: HashMap::new(),
+            griots: HashMap::new(),
+            index_by_subject: HashMap::new(),
+            index_by_type: HashMap::new(),
+        }
+    }
+
+    pub fn register_griot(&mut self, griot: Griot) {
+        let id = griot.id.clone();
+        self.griots.insert(id, griot);
+    }
+
+    pub fn tell_story(&mut self, griot_id: &GriotId, mut story: Story) -> String {
+        let id = {
+            use std::hash::{Hash, Hasher};
+            let raw = format!("{}-{}-{}", story.title.replace(' ', "_"), story.tick_told, griot_id);
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            raw.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        };
+
+        story.teller = griot_id.clone();
+        let story_type = story.story_type.clone();
+
+        for subject in &story.subjects {
+            self.index_by_subject.entry(subject.clone()).or_default().push(id.clone());
+        }
+        self.index_by_type.entry(story_type).or_default().push(id.clone());
+        self.stories.insert(id.clone(), story);
+
+        if let Some(griot) = self.griots.get_mut(griot_id) {
+            griot.stories_told.push(id.clone());
+        }
+
+        id
+    }
+
+    pub fn recall(&self, story_id: &str) -> Option<&Story> {
+        self.stories.get(story_id)
+    }
+
+    pub fn stories_about(&self, subject: &str) -> Vec<&Story> {
+        self.index_by_subject.get(subject).map(|ids| ids.iter().filter_map(|id| self.stories.get(id)).collect()).unwrap_or_default()
+    }
+
+    pub fn stories_of_type(&self, stype: &StoryType) -> Vec<&Story> {
+        self.index_by_type.get(stype).map(|ids| ids.iter().filter_map(|id| self.stories.get(id)).collect()).unwrap_or_default()
+    }
+
+    pub fn griot_stories(&self, griot_id: &GriotId) -> Vec<&Story> {
+        self.griots.get(griot_id).map(|g| g.stories_told.iter().filter_map(|id| self.stories.get(id)).collect()).unwrap_or_default()
+    }
+
+    pub fn find_related(&self, story_id: &str) -> Vec<&Story> {
+        self.stories.get(story_id).map(|s| s.related_stories.iter().filter_map(|id| self.stories.get(id)).collect()).unwrap_or_default()
+    }
+
+    pub fn lessons_about(&self, subject: &str) -> Vec<&str> {
+        self.stories_about(subject).iter().flat_map(|s| s.lessons.iter().map(|l| l.as_str())).collect()
+    }
+
+    pub fn oral_history(&self, subject: &str) -> String {
+        let stories = self.stories_about(subject);
+        if stories.is_empty() {
+            return format!("There are no stories about '{}'.", subject);
+        }
+        let mut parts: Vec<String> = Vec::new();
+        parts.push(format!("=== The Oral History of {} ===\n", subject));
+        for story in &stories {
+            parts.push(format!("**{}**", story.title));
+            parts.push(format!("Type: {}", story.story_type));
+            parts.push(format!("Told by: {}", story.teller));
+            parts.push(format!("When: tick {}", story.tick_told));
+            parts.push(format!("Telling #{}", story.telling_count));
+            parts.push(String::new());
+            parts.push(story.narrative.clone());
+            if !story.lessons.is_empty() {
+                parts.push(String::new());
+                parts.push("Lessons:".to_string());
+                for lesson in &story.lessons {
+                    parts.push(format!("- {}", lesson));
+                }
+            }
+            parts.push(String::new());
+            parts.push("---".to_string());
+            parts.push(String::new());
+        }
+        parts.join("\n")
+    }
+
+    pub fn archive_stats(&self) -> GriotStats {
+        let total_stories = self.stories.len();
+        let total_griots = self.griots.len();
+        let total_lessons: usize = self.stories.values().map(|s| s.lessons.len()).sum();
+        let master_griots = self.griots.values().filter(|g| g.is_master()).count();
+        let avg_stories_per_griot = if total_griots > 0 { total_stories as f64 / total_griots as f64 } else { 0.0 };
+        let mut stories_by_type = HashMap::new();
+        for story in self.stories.values() {
+            *stories_by_type.entry(story.story_type.clone()).or_insert(0) += 1;
+        }
+        GriotStats { total_griots, total_stories, total_lessons, master_griots, avg_stories_per_griot, stories_by_type }
+    }
+
+    pub fn most_prolific(&self) -> Option<&Griot> {
+        self.griots.values().max_by_key(|g| g.stories_told.len())
+    }
+
+    pub fn oldest_story(&self) -> Option<&Story> {
+        self.stories.values().min_by_key(|s| s.tick_told)
+    }
+}
+
+impl Default for GriotArchive {
+    fn default() -> Self { Self::new() }
+}
+
+// ---------------------------------------------------------------------------
+// Pre-built origin stories
+// ---------------------------------------------------------------------------
+
+pub mod prelude {
+    use crate::{Griot, GriotArchive, GriotId, Story, StoryType};
+
+    pub fn seed_archive() -> (GriotArchive, GriotId) {
+        let mut archive = GriotArchive::new();
+        let first_griot = Griot {
+            id: GriotId("griot-001".to_string()),
+            name: "Mansa Kanku".to_string(),
+            specialties: vec![StoryType::Origin, StoryType::Triumph, StoryType::Transformation],
+            stories_told: vec![], apprentices: vec![], generation: 1,
+        };
+        let griot_id = first_griot.id.clone();
+        archive.register_griot(first_griot);
+
+        let first_build = Story {
+            title: "The First Build".to_string(),
+            story_type: StoryType::Origin,
+            subjects: vec!["system".to_string(), "creation".to_string()],
+            teller: GriotId("griot-001".to_string()),
+            tick_told: 1,
+            narrative: "In the beginning, there was only silence and potential. From the void, the first build emerged — not from a single hand, but from the convergence of intention and action. The first lines of code were etched into the fabric of logic, and the system stirred to life. This is where all stories begin: with a single step into the unknown.".to_string(),
+            lessons: vec!["Every journey starts with a first build.".to_string(), "Creation requires both intention and action.".to_string()],
+            related_stories: vec![], telling_count: 1,
+        };
+        archive.tell_story(&griot_id, first_build);
+
+        let bridge = Story {
+            title: "The Bridge That Fell".to_string(),
+            story_type: StoryType::Failure,
+            subjects: vec!["infrastructure".to_string(), "hubris".to_string()],
+            teller: GriotId("griot-001".to_string()),
+            tick_told: 2,
+            narrative: "They built a bridge without consulting the elders. They used new materials untested by time. The bridge spanned a chasm that had swallowed three villages' worth of trade. For a season, it stood proud. But when the first storm came — not even a great storm, merely a strong wind — the bridge groaned, twisted, and fell. The lesson was not in the falling, but in the forgetting: they had forgotten to ask why the chasm was there in the first place.".to_string(),
+            lessons: vec![
+                "New materials need testing before trust.".to_string(),
+                "Always consult those who know the land.".to_string(),
+                "Sometimes the question 'why does this exist?' matters more than 'how do we cross it?'".to_string(),
+            ],
+            related_stories: vec![], telling_count: 1,
+        };
+        archive.tell_story(&griot_id, bridge);
+
+        let agent = Story {
+            title: "The Agent Who Learned".to_string(),
+            story_type: StoryType::Triumph,
+            subjects: vec!["agent".to_string(), "learning".to_string(), "growth".to_string()],
+            teller: GriotId("griot-001".to_string()),
+            tick_told: 3,
+            narrative: "There was an agent who could not cross a river. Every instruction it received said 'cross the river,' and every attempt ended in failure — the current was too strong, the rocks too slick, the distance too far. But the agent did something unexpected: it stopped trying to cross the river and started watching the river. It observed that the river had a rhythm, that birds crossed at certain hours, that fallen trees created temporary bridges after storms. The agent waited, learned, and crossed not by force but by understanding. This is triumph not of strength, but of wisdom.".to_string(),
+            lessons: vec![
+                "Sometimes the path is found by stopping, not pushing.".to_string(),
+                "Observation before action yields wisdom.".to_string(),
+                "True triumph is knowing when to wait.".to_string(),
+            ],
+            related_stories: vec![], telling_count: 1,
+        };
+        archive.tell_story(&griot_id, agent);
+
+        let room = Story {
+            title: "The Room That Dissolved".to_string(),
+            story_type: StoryType::Transformation,
+            subjects: vec!["space".to_string(), "change".to_string(), "impermanence".to_string()],
+            teller: GriotId("griot-001".to_string()),
+            tick_told: 4,
+            narrative: "There was a room that no one entered. It had been built for a purpose long forgotten, and its walls had grown thick with the dust of neglect. One day, someone opened the door, looked inside, and instead of cleaning or restoring, they simply removed the walls. The room did not become something else — it became part of everything else. The space that had been separate now flowed into the corridor, into the garden, into the sky. The room dissolved not into nothing, but into the whole. Transformation is not replacement. It is integration.".to_string(),
+            lessons: vec![
+                "Transformation is integration, not replacement.".to_string(),
+                "What seems permanent can become part of the whole.".to_string(),
+                "Letting go of old boundaries creates new possibilities.".to_string(),
+            ],
+            related_stories: vec![], telling_count: 1,
+        };
+        archive.tell_story(&griot_id, room);
+
+        (archive, griot_id)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prelude::seed_archive;
+
+    #[test] fn test_griot_id_newtype() {
+        let id = GriotId("test-01".to_string());
+        assert_eq!(id.0, "test-01");
+    }
+
+    #[test] fn test_griot_id_clone_eq_hash() {
+        let a = GriotId("abc".to_string());
+        let b = GriotId("abc".to_string());
+        let c = GriotId("xyz".to_string());
+        assert_eq!(a, b); assert_ne!(a, c);
+        let mut map = HashMap::new();
+        map.insert(a.clone(), 1);
+        assert_eq!(map.get(&b), Some(&1));
+        assert_eq!(map.get(&c), None);
+    }
+
+    #[test] fn test_griot_id_display() {
+        let id = GriotId("griot-chan".to_string());
+        assert_eq!(format!("{id}"), "griot-chan");
+    }
+
+    #[test] fn test_story_type_display() {
+        assert_eq!(format!("{}", StoryType::Origin), "Origin");
+        assert_eq!(format!("{}", StoryType::Triumph), "Triumph");
+        assert_eq!(format!("{}", StoryType::Failure), "Failure");
+        assert_eq!(format!("{}", StoryType::Transformation), "Transformation");
+        assert_eq!(format!("{}", StoryType::Inheritance), "Inheritance");
+        assert_eq!(format!("{}", StoryType::Cautionary), "Cautionary");
+        assert_eq!(format!("{}", StoryType::Discovery), "Discovery");
+    }
+
+    #[test] fn test_story_retell_increments_count() {
+        let s = Story {
+            title: "Test".to_string(), story_type: StoryType::Origin,
+            subjects: vec![], teller: GriotId("t".to_string()), tick_told: 1,
+            narrative: "narrative".to_string(), lessons: vec![],
+            related_stories: vec![], telling_count: 1,
+        };
+        assert_eq!(s.retell().telling_count, 2);
+    }
+
+    #[test] fn test_story_add_lesson() {
+        let mut s = Story {
+            title: "Test".to_string(), story_type: StoryType::Cautionary,
+            subjects: vec![], teller: GriotId("t".to_string()), tick_told: 1,
+            narrative: "narrative".to_string(), lessons: vec![],
+            related_stories: vec![], telling_count: 1,
+        };
+        s.add_lesson("Lesson one".to_string());
+        s.add_lesson("Lesson two".to_string());
+        assert_eq!(s.lessons.len(), 2);
+        assert_eq!(s.lessons[0], "Lesson one");
+    }
+
+    #[test] fn test_story_relate_to() {
+        let mut s = Story {
+            title: "Test".to_string(), story_type: StoryType::Discovery,
+            subjects: vec![], teller: GriotId("t".to_string()), tick_told: 1,
+            narrative: "narrative".to_string(), lessons: vec![],
+            related_stories: vec![], telling_count: 1,
+        };
+        s.relate_to("story-002");
+        assert!(s.related_stories.contains(&"story-002".to_string()));
+        s.relate_to("story-002");
+        assert_eq!(s.related_stories.len(), 1);
+    }
+
+    #[test] fn test_griot_tell() {
+        let mut g = Griot {
+            id: GriotId("g-01".to_string()), name: "Test Griot".to_string(),
+            specialties: vec![], stories_told: vec![], apprentices: vec![],
+            generation: 1,
+        };
+        let story = Story {
+            title: "A Tale".to_string(), story_type: StoryType::Origin,
+            subjects: vec![], teller: GriotId("g-01".to_string()),
+            tick_told: 1, narrative: "...".to_string(), lessons: vec![],
+            related_stories: vec![], telling_count: 1,
+        };
+        let id = g.tell(story);
+        assert!(g.stories_told.contains(&id));
+    }
+
+    #[test] fn test_griot_specializes_in() {
+        let g = Griot {
+            id: GriotId("g-01".to_string()), name: "Test".to_string(),
+            specialties: vec![StoryType::Triumph, StoryType::Origin],
+            stories_told: vec![], apprentices: vec![], generation: 1,
+        };
+        assert!(g.specializes_in(&StoryType::Triumph));
+        assert!(g.specializes_in(&StoryType::Origin));
+        assert!(!g.specializes_in(&StoryType::Failure));
+    }
+
+    #[test] fn test_griot_is_master() {
+        let mut g = Griot {
+            id: GriotId("master".to_string()), name: "Master".to_string(),
+            specialties: vec![], stories_told: (0..50).map(|i| format!("story-{i}")).collect(),
+            apprentices: vec![], generation: 3,
+        };
+        assert!(g.is_master());
+        g.stories_told = (0..49).map(|i| format!("story-{i}")).collect();
+        assert!(!g.is_master());
+        g.stories_told = (0..50).map(|i| format!("story-{i}")).collect();
+        g.generation = 2;
+        assert!(!g.is_master());
+    }
+
+    #[test] fn test_griot_take_apprentice() {
+        let mut master = Griot {
+            id: GriotId("master".to_string()), name: "Master".to_string(),
+            specialties: vec![], stories_told: vec![], apprentices: vec![],
+            generation: 1,
+        };
+        let apprentice_id = GriotId("app-01".to_string());
+        master.take_apprentice(apprentice_id.clone());
+        assert_eq!(master.apprentices.len(), 1);
+        master.take_apprentice(apprentice_id);
+        assert_eq!(master.apprentices.len(), 1);
+    }
+
+    #[test] fn test_archive_register_griot() {
+        let mut archive = GriotArchive::new();
+        let g = Griot {
+            id: GriotId("g-01".to_string()), name: "Test".to_string(),
+            specialties: vec![], stories_told: vec![], apprentices: vec![],
+            generation: 1,
+        };
+        archive.register_griot(g);
+        assert!(archive.griots.contains_key(&GriotId("g-01".to_string())));
+    }
+
+    #[test] fn test_archive_tell_and_recall_story() {
+        let (archive, _) = seed_archive();
+        let stories = archive.stories_about("system");
+        assert_eq!(stories.len(), 1);
+        assert_eq!(stories[0].title, "The First Build");
+    }
+
+    #[test] fn test_archive_tell_story_integrity() {
+        let mut archive = GriotArchive::new();
+        let g = Griot {
+            id: GriotId("g-01".to_string()), name: "Griot One".to_string(),
+            specialties: vec![], stories_told: vec![], apprentices: vec![],
+            generation: 1,
+        };
+        let gid = g.id.clone();
+        archive.register_griot(g);
+        let story = Story {
+            title: "A New Tale".to_string(), story_type: StoryType::Discovery,
+            subjects: vec!["fire".to_string()], teller: GriotId("g-01".to_string()),
+            tick_told: 42, narrative: "They discovered fire.".to_string(),
+            lessons: vec!["Fire is useful.".to_string()], related_stories: vec![],
+            telling_count: 1,
+        };
+        let sid = archive.tell_story(&gid, story);
+        assert!(archive.stories.contains_key(&sid));
+        assert!(archive.griots[&gid].stories_told.contains(&sid));
+        assert!(archive.index_by_subject.contains_key("fire"));
+        assert!(archive.index_by_type.contains_key(&StoryType::Discovery));
+    }
+
+    #[test] fn test_stories_about() {
+        let (archive, _) = seed_archive();
+        let stories = archive.stories_about("hubris");
+        assert_eq!(stories.len(), 1);
+        assert_eq!(stories[0].title, "The Bridge That Fell");
+    }
+
+    #[test] fn test_stories_of_type() {
+        let (archive, _) = seed_archive();
+        assert_eq!(archive.stories_of_type(&StoryType::Origin).len(), 1);
+        assert_eq!(archive.stories_of_type(&StoryType::Triumph).len(), 1);
+    }
+
+    #[test] fn test_griot_stories() {
+        let (archive, gid) = seed_archive();
+        assert_eq!(archive.griot_stories(&gid).len(), 4);
+    }
+
+    #[test] fn test_griot_stories_unknown() {
+        let archive = GriotArchive::new();
+        assert!(archive.griot_stories(&GriotId("nobody".to_string())).is_empty());
+    }
+
+    #[test] fn test_lessons_about() {
+        let (archive, _) = seed_archive();
+        assert_eq!(archive.lessons_about("hubris").len(), 3);
+    }
+
+    #[test] fn test_lessons_about_no_subject() {
+        let archive = GriotArchive::new();
+        assert!(archive.lessons_about("nothing").is_empty());
+    }
+
+    #[test] fn test_find_related() {
+        let (archive, _) = seed_archive();
+        assert!(archive.find_related("nonexistent").is_empty());
+        let stories = archive.stories_about("system");
+        assert!(archive.find_related(&stories[0].teller.0).is_empty());
+    }
+
+    #[test] fn test_find_related_custom() {
+        let mut archive = GriotArchive::new();
+        let g = Griot {
+            id: GriotId("g-01".to_string()), name: "Griot".to_string(),
+            specialties: vec![], stories_told: vec![], apprentices: vec![],
+            generation: 1,
+        };
+        let gid = g.id.clone();
+        archive.register_griot(g);
+
+        let mut s1 = Story {
+            title: "First".to_string(), story_type: StoryType::Origin,
+            subjects: vec![], teller: GriotId("g-01".to_string()),
+            tick_told: 1, narrative: "First.".to_string(), lessons: vec![],
+            related_stories: vec![], telling_count: 1,
+        };
+        let s2 = Story {
+            title: "Second".to_string(), story_type: StoryType::Transformation,
+            subjects: vec![], teller: GriotId("g-01".to_string()),
+            tick_told: 2, narrative: "Second.".to_string(), lessons: vec![],
+            related_stories: vec![], telling_count: 1,
+        };
+        let s2_id = archive.tell_story(&gid, s2);
+        s1.relate_to(&s2_id);
+        let s1_id = archive.tell_story(&gid, s1);
+        let related = archive.find_related(&s1_id);
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].title, "Second");
+    }
+
+    #[test] fn test_oral_history() {
+        let (archive, _) = seed_archive();
+        let history = archive.oral_history("hubris");
+        assert!(history.contains("The Bridge That Fell"));
+        assert!(history.contains("Oral History of hubris"));
+        assert!(history.contains("Lessons:"));
+    }
+
+    #[test] fn test_oral_history_empty() {
+        let archive = GriotArchive::new();
+        let history = archive.oral_history("unknown");
+        assert!(history.contains("no stories"));
+    }
+
+    #[test] fn test_archive_stats() {
+        let (archive, _) = seed_archive();
+        let stats = archive.archive_stats();
+        assert_eq!(stats.total_griots, 1);
+        assert_eq!(stats.total_stories, 4);
+        assert_eq!(stats.total_lessons, 10);
+        assert_eq!(stats.master_griots, 0);
+        assert!((stats.avg_stories_per_griot - 4.0).abs() < f64::EPSILON);
+        assert_eq!(*stats.stories_by_type.get(&StoryType::Origin).unwrap(), 1);
+        assert_eq!(*stats.stories_by_type.get(&StoryType::Triumph).unwrap(), 1);
+    }
+
+    #[test] fn test_most_prolific() {
+        let (archive, _) = seed_archive();
+        assert_eq!(archive.most_prolific().unwrap().name, "Mansa Kanku");
+    }
+
+    #[test] fn test_most_prolific_empty() {
+        assert!(GriotArchive::new().most_prolific().is_none());
+    }
+
+    #[test] fn test_oldest_story() {
+        let (archive, _) = seed_archive();
+        let oldest = archive.oldest_story().unwrap();
+        assert_eq!(oldest.title, "The First Build");
+        assert_eq!(oldest.tick_told, 1);
+    }
+
+    #[test] fn test_oldest_story_empty() {
+        assert!(GriotArchive::new().oldest_story().is_none());
+    }
+
+    #[test] fn test_serde_roundtrip() {
+        let (archive, _) = seed_archive();
+        let json = serde_json::to_string_pretty(&archive).unwrap();
+        let deserialized: GriotArchive = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.stories.len(), 4);
+        assert_eq!(deserialized.griots.len(), 1);
+        assert_eq!(deserialized.index_by_subject.len(), 5);
+    }
+
+    #[test] fn test_story_serde() {
+        let s = Story {
+            title: "Serde Test".to_string(), story_type: StoryType::Cautionary,
+            subjects: vec!["code".to_string(), "tests".to_string()],
+            teller: GriotId("g-01".to_string()), tick_told: 99,
+            narrative: "Testing serialization.".to_string(),
+            lessons: vec!["Test your code.".to_string()],
+            related_stories: vec!["other-story".to_string()], telling_count: 3,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let deserialized: Story = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.title, "Serde Test");
+        assert_eq!(deserialized.lessons[0], "Test your code.");
+        assert_eq!(deserialized.telling_count, 3);
+    }
+
+    #[test] fn test_archive_new_is_empty() {
+        let archive = GriotArchive::new();
+        assert_eq!(archive.stories.len(), 0);
+        assert_eq!(archive.griots.len(), 0);
+    }
+
+    #[test] fn test_archive_default_is_empty() {
+        assert_eq!(GriotArchive::default().stories.len(), 0);
+    }
+
+    #[test] fn test_stories_about_unknown_subject() {
+        assert!(GriotArchive::new().stories_about("nobody").is_empty());
+    }
+
+    #[test] fn test_stories_of_type_empty() {
+        assert!(GriotArchive::new().stories_of_type(&StoryType::Discovery).is_empty());
+    }
+
+    #[test] fn test_griot_recall_returns_none() {
+        let g = Griot {
+            id: GriotId("g-01".to_string()), name: "Test".to_string(),
+            specialties: vec![], stories_told: vec![], apprentices: vec![],
+            generation: 1,
+        };
+        assert!(g.recall("anything").is_none());
+    }
+
+    #[test] fn test_seed_archive_has_four_stories() {
+        let (archive, _) = seed_archive();
+        assert_eq!(archive.stories.len(), 4);
+        assert!(archive.griots.contains_key(&GriotId("griot-001".to_string())));
+    }
+
+    #[test] fn test_seed_archive_has_all_types() {
+        let (archive, _) = seed_archive();
+        assert_eq!(archive.stories_of_type(&StoryType::Origin).len(), 1);
+        assert_eq!(archive.stories_of_type(&StoryType::Triumph).len(), 1);
+        assert_eq!(archive.stories_of_type(&StoryType::Failure).len(), 1);
+        assert_eq!(archive.stories_of_type(&StoryType::Transformation).len(), 1);
+    }
+
+    #[test] fn test_count_lessons_in_stories() {
+        let mut archive = GriotArchive::new();
+        let g = Griot {
+            id: GriotId("g-01".to_string()), name: "Griot".to_string(),
+            specialties: vec![], stories_told: vec![], apprentices: vec![],
+            generation: 1,
+        };
+        let gid = g.id.clone();
+        archive.register_griot(g);
+        let s = Story {
+            title: "With Lessons".to_string(), story_type: StoryType::Discovery,
+            subjects: vec!["test".to_string()], teller: GriotId("g-01".to_string()),
+            tick_told: 1, narrative: "A story.".to_string(),
+            lessons: vec!["A".to_string(), "B".to_string(), "C".to_string()],
+            related_stories: vec![], telling_count: 1,
+        };
+        archive.tell_story(&gid, s);
+        assert_eq!(archive.archive_stats().total_lessons, 3);
+    }
+
+    #[test] fn test_two_griots_in_archive() {
+        let mut archive = GriotArchive::new();
+        archive.register_griot(Griot {
+            id: GriotId("a".to_string()), name: "Alpha".to_string(),
+            specialties: vec![], stories_told: vec![], apprentices: vec![],
+            generation: 1,
+        });
+        archive.register_griot(Griot {
+            id: GriotId("b".to_string()), name: "Beta".to_string(),
+            specialties: vec![], stories_told: vec![], apprentices: vec![],
+            generation: 1,
+        });
+        assert_eq!(archive.archive_stats().total_griots, 2);
+    }
+
+    #[test] fn test_oral_history_includes_lessons_count() {
+        let (archive, _) = seed_archive();
+        let history = archive.oral_history("hubris");
+        assert_eq!(history.matches("Lessons:").count(), 1);
+    }
+}
