@@ -2,6 +2,9 @@
 name = "lau-griot"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/SuperInstance/lau-griot"
+description = "Rust library for griot in the PLATO ecosystem"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
